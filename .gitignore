@@ -19,11 +19,21 @@ data/
 *.mov
 *.avi
 *.mkv
+*.jpg
+*.png
 
 
 # YOLO / training runs
 runs/
 *.pt
+
+!runs/
+!runs/detect/
+!runs/detect/train3/
+!runs/detect/train3/weights/
+!runs/detect/train3/weights/best.pt
+
+
 
 # Logs
 *.log
