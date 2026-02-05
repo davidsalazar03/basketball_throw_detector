@@ -36,6 +36,7 @@ Code/runs/**/best.pt
 Code/yolo*.pt
 Code/yolov*.pt
 
+basketball-ball-detection-train_set-Job_2.coco/**
 
 # YOLO runs: ignore everything
 runs/**
