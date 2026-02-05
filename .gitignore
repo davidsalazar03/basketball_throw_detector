@@ -24,16 +24,28 @@ data/
 *.mp4
 
 
-# YOLO / training runs
-runs/
-*.pt
+# Keep only this trained model
+!Code/runs/detect/train3/weights/best.pt
 
-!runs/
-!runs/detect/
-!runs/detect/train3/
-!runs/detect/train3/weights/
+# Ignore all other weights explicitly
+Code/runs/**/last.pt
+Code/runs/**/best.pt
+!Code/runs/detect/train3/weights/best.pt
+
+# Ignore base yolov8/yolo weights if they appear in Code/
+Code/yolo*.pt
+Code/yolov*.pt
+
+
+# YOLO runs: ignore everything
+runs/**
+
+# ...but keep model weights
+!runs/**/*.pt
+
+# (optional) keep only the final best.pt and ignore all other .pt
+runs/**
 !runs/detect/train3/weights/best.pt
-
 
 
 # Logs
