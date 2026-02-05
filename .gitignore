@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Outputs & data
+outputs/
+data/
+*.mov
+*.avi
+*.mkv
+
+
+# YOLO / training runs
+runs/
+*.pt
+
+# Logs
+*.log
