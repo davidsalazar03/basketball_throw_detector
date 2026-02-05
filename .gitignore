@@ -48,6 +48,9 @@ runs/**
 runs/**
 !runs/detect/train3/weights/best.pt
 
+Add-Content .gitignore "`n# Large archives`n*.zip`n"
+
+
 
 # Logs
 *.log
