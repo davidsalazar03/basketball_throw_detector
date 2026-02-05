@@ -21,6 +21,7 @@ data/
 *.mkv
 *.jpg
 *.png
+*.mp4
 
 
 # YOLO / training runs
