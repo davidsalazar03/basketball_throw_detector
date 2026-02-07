@@ -1,22 +1,22 @@
 """
 refine_calib_ground_vp.py
 
-Refinamento (bundle adjustment simples) a partir de:
-- H_ground_clean (mundo XY no chão -> imagem)
-- vp_vertical (ponto de fuga vertical)
-- inliers (IDs do ajuste da homografia)
-- correspondências (X,Y,0) <-> (u,v)
+Refinement (simple bundle adjustment) starting from:
+- H_ground_clean (world XY on the ground plane -> image)
+- vp_vertical (vertical vanishing point)
+- inliers (IDs from the homography fit)
+- correspondences (X,Y,0) <-> (u,v)
 
-Objetivo: reduzir o RMSE do modelo pinhole ajustando intrínsecos e extrínsecos.
+Goal: reduce the pinhole-model RMSE by adjusting intrinsics and extrinsics.
 
-Hipóteses (mantém "método da disciplina", mas com refinamento por reprojeção):
-- skew = 0 (fixo)
-- fx = fy (fixo via aspect ratio)
-- principal point (cx,cy) livre (ajustável)
-- distorção: por defeito estima só k1 (fixa k2..k6 e tangencial)
-  (podes desligar com ESTIMATE_K1 = False)
+Assumptions (keeps the "course method", but adds reprojection refinement):
+- skew = 0 (fixed)
+- fx = fy (fixed via aspect ratio)
+- principal point (cx,cy) is free (optimizable)
+- distortion: by default estimate only k1 (k2..k6 and tangential fixed)
+  (you can disable this with ESTIMATE_K1 = False)
 
-Requisitos: numpy, pandas, opencv-python
+Requirements: numpy, pandas, opencv-python
 """
 
 from __future__ import annotations
@@ -36,14 +36,14 @@ OUT_DIR = Path("outputs")
 WORLD_CSV = BASE_DIR / "world_points_coord.csv"  # id,x,y,z
 IMAGE_CSV = BASE_DIR / "image_points.csv"        # id,u,v
 IMAGE_SIZE_TXT = BASE_DIR / "image_size.txt"     # W H
-VP_VERTICAL_TXT = BASE_DIR / "vp_vertical.txt"   # u,v,w ou u v w
+VP_VERTICAL_TXT = BASE_DIR / "vp_vertical.txt"   # u,v,w or u v w
 
-# Usa os outputs do script anterior:
+# Uses outputs from the previous script:
 H_CLEAN_TXT = OUT_DIR / "H_ground_clean.txt"
 INLIERS_IDS_TXT = OUT_DIR / "inliers_ids.txt"
 
-# refinamento
-ESTIMATE_K1 = True      # True: estima k1; False: distorção = 0
+# Refinement
+ESTIMATE_K1 = True      # True: estimate k1; False: distortion = 0
 MAX_ITERS = 300
 EPS = 1e-10
 
@@ -56,7 +56,7 @@ def read_image_size(path: Path) -> tuple[int, int]:
     txt = path.read_text(encoding="utf-8").strip()
     parts = txt.split()
     if len(parts) != 2:
-        raise ValueError(f"Formato inválido em {path}. Esperado: 'W H'.")
+        raise ValueError(f"Invalid format in {path}. Expected: 'W H'.")
     return int(parts[0]), int(parts[1])
 
 
@@ -65,7 +65,7 @@ def read_vp_vertical(path: Path) -> np.ndarray:
     parts = re.split(r"[,\s]+", txt)
     parts = [p for p in parts if p != ""]
     if len(parts) != 3:
-        raise ValueError(f"Formato inválido em {path}. Esperado: 3 números (u,v,w).")
+        raise ValueError(f"Invalid format in {path}. Expected: 3 numbers (u,v,w).")
     v = np.array([float(parts[0]), float(parts[1]), float(parts[2])], dtype=float)
     if abs(v[2]) > 1e-12:
         v = v / v[2]
@@ -74,10 +74,10 @@ def read_vp_vertical(path: Path) -> np.ndarray:
 
 def load_matrix_txt(path: Path) -> np.ndarray:
     """
-    Lê matriz 3x3 de um TXT, aceitando:
-    - linhas com espaços
-    - linhas com vírgulas
-    - linhas com brackets tipo [a b c]
+    Load a 3x3 matrix from a TXT file, accepting:
+    - whitespace-separated lines
+    - comma-separated lines
+    - bracketed lines like [a b c]
     """
     lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     vals = []
@@ -88,7 +88,7 @@ def load_matrix_txt(path: Path) -> np.ndarray:
         vals.append([float(x) for x in parts])
     M = np.array(vals, dtype=float)
     if M.shape != (3, 3):
-        raise ValueError(f"Esperava 3x3 em {path}, obtive {M.shape}.")
+        raise ValueError(f"Expected a 3x3 matrix in {path}, got {M.shape}.")
     if abs(M[2, 2]) > 1e-12:
         M = M / M[2, 2]
     return M
@@ -105,13 +105,13 @@ def load_points(world_csv: Path, image_csv: Path) -> pd.DataFrame:
 
     for col in ["id", "x", "y"]:
         if col not in wdf.columns:
-            raise ValueError(f"{world_csv} tem de conter '{col}'.")
+            raise ValueError(f"{world_csv} must contain '{col}'.")
     if "z" not in wdf.columns:
         wdf["z"] = 0.0
 
     for col in ["id", "u", "v"]:
         if col not in idf.columns:
-            raise ValueError(f"{image_csv} tem de conter '{col}'.")
+            raise ValueError(f"{image_csv} must contain '{col}'.")
     wdf["id"] = wdf["id"].astype(str).str.strip()
     idf["id"] = idf["id"].astype(str).str.strip()
 
@@ -121,9 +121,9 @@ def load_points(world_csv: Path, image_csv: Path) -> pd.DataFrame:
 
 def estimate_f_from_orthogonal_vps(vps: list[np.ndarray], W: int, H: int) -> tuple[float, float, float, list[float]]:
     """
-    Assume: skew=0, fx=fy=f, principal point no centro (para seed).
-    Para VPs ortogonais: (vi-c)·(vj-c) + f^2 = 0
-    devolve f, cx, cy, e lista de f^2 por pares.
+    Assumes: skew=0, fx=fy=f, principal point at the image center (for seeding).
+    For orthogonal VPs: (vi-c)·(vj-c) + f^2 = 0
+    Returns f, cx, cy, and the list of f^2 values per pair.
     """
     cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
     c = np.array([cx, cy], dtype=float)
@@ -136,14 +136,14 @@ def estimate_f_from_orthogonal_vps(vps: list[np.ndarray], W: int, H: int) -> tup
 
     f2_pos = [x for x in f2_list if x > 0]
     if len(f2_pos) == 0:
-        raise RuntimeError("Não obtive f^2 positivo a partir dos VPs com cx,cy no centro.")
+        raise RuntimeError("Could not obtain a positive f^2 from the VPs with cx,cy at the image center.")
     f = float(np.sqrt(np.median(np.array(f2_pos))))
     return f, cx, cy, f2_list
 
 
 def decompose_H_to_pose(K: np.ndarray, H: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    H = K [r1 r2 t] (até escala) -> R,t mundo->câmara
+    H = K [r1 r2 t] (up to scale) -> R,t world->camera
     """
     Kinv = np.linalg.inv(K)
     h1, h2, h3 = H[:, 0], H[:, 1], H[:, 2]
@@ -181,23 +181,23 @@ def main():
 
     df = load_points(WORLD_CSV, IMAGE_CSV)
 
-    # Filtra chão (Z=0) e inliers
+    # Filter ground plane (Z=0) and inliers
     df["z"] = df["z"].astype(float)
     df = df[np.abs(df["z"]) <= 1e-6].copy()
     df = df[df["id"].isin(inliers)].copy()
     if len(df) < 4:
-        raise RuntimeError(f"Poucos inliers no chão para refinamento: N={len(df)}.")
+        raise RuntimeError(f"Not enough ground-plane inliers for refinement: N={len(df)}.")
 
     XY = df[["x", "y"]].to_numpy(dtype=float)
     uv = df[["u", "v"]].to_numpy(dtype=float)
 
-    # VPs do plano a partir de H
+    # Plane vanishing points from H
     h1 = H_clean[:, 0].copy()
     h2 = H_clean[:, 1].copy()
     v_x = h1 / (h1[2] + 1e-12)
     v_y = h2 / (h2[2] + 1e-12)
 
-    # Seed K0 (f, centro) e pose inicial
+    # Seed K0 (f, center) and initial pose
     f0, cx0, cy0, f2_list = estimate_f_from_orthogonal_vps([v_x, v_y, v_z], W, Himg)
     K0 = np.array([[f0, 0.0, cx0],
                    [0.0, f0, cy0],
@@ -207,49 +207,50 @@ def main():
     rvec0, _ = cv2.Rodrigues(R0)
     tvec0 = t0.reshape(3, 1)
 
-    # Distorção inicial
+    # Initial distortion
     dist0 = np.zeros((5, 1), dtype=np.float64)  # [k1,k2,p1,p2,k3]
     if not ESTIMATE_K1:
         dist0[:] = 0.0
 
-    # RMSE inicial
+    # Initial RMSE
     obj_pts = np.c_[XY, np.zeros((XY.shape[0], 1), dtype=float)].astype(np.float64)
     img_pts = uv.astype(np.float64)
 
     uv_hat0 = project_points_cv(obj_pts, rvec0, tvec0, K0, dist0)
     rmse0 = rmse_px(img_pts, uv_hat0)
 
-    print(f"[SEED] f0={f0:.3f}px, (cx0,cy0)=({cx0:.1f},{cy0:.1f}), f^2 pares={f2_list}")
-    print(f"[SEED] RMSE reprojeção (inliers) antes de refinar: {rmse0:.3f} px")
+    print(f"[SEED] f0={f0:.3f}px, (cx0,cy0)=({cx0:.1f},{cy0:.1f}), f^2 pairs={f2_list}")
+    print(f"[SEED] Reprojection RMSE (inliers) before refinement: {rmse0:.3f} px")
 
-    # Refinamento com calibrateCamera (1 imagem)
+    # Refinement using calibrateCamera (single image)
     objpoints = [obj_pts.astype(np.float32)]
     imgpoints = [img_pts.astype(np.float32)]
     image_size = (W, Himg)
 
-
     K_init = K0.astype(np.float64)
     K_init[0, 1] = 0.0  # skew=0
-    K_init[0,2] = (W - 1)/2
-    K_init[1,2] = (Himg - 1)/2
-    
+    K_init[0, 2] = (W - 1) / 2
+    K_init[1, 2] = (Himg - 1) / 2
+
     dist_init = dist0.astype(np.float64)
 
     flags = 0
 
-    # helper para adicionar flags só se existirem
+    # Helper to add flags only if they exist in the current OpenCV build
     def add_flag(name: str):
         nonlocal flags
         if hasattr(cv2, name):
             flags |= getattr(cv2, name)
 
     add_flag("CALIB_USE_INTRINSIC_GUESS")
-    add_flag("CALIB_FIX_ASPECT_RATIO")     # força fx/fy a manter-se (igual se K_init tiver fx=fy)
+    add_flag("CALIB_FIX_ASPECT_RATIO")     # keeps fx/fy ratio (equal if K_init has fx=fy)
     add_flag("CALIB_ZERO_TANGENT_DIST")    # p1=p2=0
-    add_flag("CALIB_FIX_PRINCIPAL_POINT")   # fixa cx,cy (se quiseres deixar livre, não adicionas esta flag e garantimos cx0,cy0 no seed)
 
-    # skew: algumas builds não têm CALIB_FIX_SKEW
-    # Se existir, usa; se não existir, garantimos skew=0 no guess e não o libertamos.
+    # NOTE: keep principal point free (do NOT fix it)
+    # If you want to fix cx,cy, then enable this flag:
+    # add_flag("CALIB_FIX_PRINCIPAL_POINT")
+
+    # Skew: some builds do not have CALIB_FIX_SKEW
     add_flag("CALIB_FIX_SKEW")
 
     if ESTIMATE_K1:
@@ -269,15 +270,15 @@ def main():
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, MAX_ITERS, EPS)
 
     rms, K_ref, dist_ref, rvecs, tvecs = cv2.calibrateCamera(
-    objpoints,     # objectPoints
-    imgpoints,     # imagePoints
-    image_size,    # imageSize (W,H)
-    K_init,        # cameraMatrix
-    dist_init,     # distCoeffs
-    None,          # rvecs (output)
-    None,          # tvecs (output)
-    flags,         # flags
-    criteria       # criteria
+        objpoints,     # objectPoints
+        imgpoints,     # imagePoints
+        image_size,    # imageSize (W,H)
+        K_init,        # cameraMatrix
+        dist_init,     # distCoeffs
+        None,          # rvecs (output)
+        None,          # tvecs (output)
+        flags,         # flags
+        criteria       # criteria
     )
 
     rvec_ref = rvecs[0]
@@ -285,14 +286,14 @@ def main():
     R_ref, _ = cv2.Rodrigues(rvec_ref)
     t_ref = tvec_ref.reshape(3)
 
-    # RMSE final (reprojeção)
+    # Final RMSE (reprojection)
     uv_hat_ref = project_points_cv(obj_pts, rvec_ref, tvec_ref, K_ref, dist_ref)
     rmse1 = rmse_px(img_pts, uv_hat_ref)
 
     C_ref = -R_ref.T @ t_ref
 
-    print(f"[REFINE] OpenCV rms reportado: {float(rms):.3f}")
-    print(f"[REFINE] RMSE reprojeção (inliers) depois de refinar: {rmse1:.3f} px")
+    print(f"[REFINE] OpenCV reported rms: {float(rms):.3f}")
+    print(f"[REFINE] Reprojection RMSE (inliers) after refinement: {rmse1:.3f} px")
     print(f"[REFINE] K_ref=\n{K_ref}")
     print(f"[REFINE] dist_ref=[k1,k2,p1,p2,k3]= {dist_ref.reshape(-1).tolist()}")
 
@@ -333,8 +334,8 @@ def main():
         XY=XY, uv=uv
     )
 
-    print(f"[DONE] Guardado: {OUT_JSON}")
-    print(f"[DONE] Guardado: {OUT_NPZ}")
+    print(f"[DONE] Saved: {OUT_JSON}")
+    print(f"[DONE] Saved: {OUT_NPZ}")
 
 
 if __name__ == "__main__":

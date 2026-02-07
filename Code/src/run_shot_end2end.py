@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------- USER PATHS ----------------
-VIDEO_PATH = r"data/new_videos_raw/shot_4.mp4"
+VIDEO_PATH = r"data/new_videos_raw/shot_9.mp4"
 MODEL_PATH = r"runs/detect/train3/weights/best.pt"
 
 CALIB_JSON = r"outputs/calibration_refined.json"
@@ -22,23 +22,23 @@ OUT_TRAJ_WORLD = OUT_DIR / "ball_trajectory_world.csv"
 OUT_DECISION = OUT_DIR / "shot_decision.json"
 # -------------------------------------------
 
-# Basket
+# Basket parameters
 HOOP_DIAM_M = 0.45
 HOOP_R_M = HOOP_DIAM_M / 2.0
-HOOP_Z_OFFSET_M = -0.08  # ajusta: -0.10 baixa 10 cm
+HOOP_Z_OFFSET_M = -0.08  # adjust: -0.10 lowers hoop by 10 cm
 
 BALL_R_M = 0.12
-ENTER_N_CONSEC = 3      # nº de frames consecutivos (2 ou 3 é típico)
-ENTER_MARGIN_M = 0.00   # margem extra (podes pôr 0.01 se quiseres ser mais permissivo)
+ENTER_N_CONSEC = 3       # number of consecutive frames (2 or 3 is typical)
+ENTER_MARGIN_M = 0.00    # extra margin (set 0.01 if you want to be more permissive)
 
-# decisão (simples e pouco conservadora)
-TOL_M = 0.05  # tolerância extra (m): ajusta se necessário
+# Decision (simple and not conservative)
+TOL_M = 0.05  # extra tolerance (m): tune if needed
 
-# deteção
+# Detection
 CONF_MIN = 0.25
-BALL_CLASS_ID = None  # mete o id se o modelo tiver várias classes
+BALL_CLASS_ID = None  # set the class id if your model has multiple classes
 
-# overlay
+# Overlay
 MAX_TRAIL = 140
 
 
@@ -70,7 +70,7 @@ def load_keypoints(world_csv: str, image_csv: str):
 
     common = sorted(set(w_map.keys()) & set(i_map.keys()))
     if len(common) < 4:
-        raise ValueError(f"Precisas de >=4 correspondências 3D-2D. Só encontrei {len(common)}: {common}")
+        raise ValueError(f"You need >=4 3D-2D correspondences. Found {len(common)}: {common}")
 
     obj = np.stack([w_map[k] for k in common], axis=0).astype(np.float64)  # Nx3
     img = np.stack([i_map[k] for k in common], axis=0).astype(np.float64)  # Nx2
@@ -94,13 +94,13 @@ def refine_pose_solvepnp(calib: dict, obj_pts: np.ndarray, img_pts: np.ndarray):
         flags=cv2.SOLVEPNP_ITERATIVE
     )
     if not ok:
-        raise RuntimeError("solvePnP falhou.")
+        raise RuntimeError("solvePnP failed.")
 
-    # RMSE reprojeção
+    # Reprojection RMSE
     proj, _ = cv2.projectPoints(obj_pts, rvec, tvec, K, dist)
     proj = proj.reshape(-1, 2)
     err = np.linalg.norm(proj - img_pts, axis=1)
-    rmse = float(np.sqrt(np.mean(err**2)))
+    rmse = float(np.sqrt(np.mean(err ** 2)))
     return rvec, tvec, rmse
 
 
@@ -112,8 +112,8 @@ def undistort_to_normalized(u, v, K, dist):
 
 
 def ray_world_from_pixel(u, v, K, dist, R_wc):
-    d_c = undistort_to_normalized(u, v, K, dist)   # direção em câmara
-    d_w = R_wc @ d_c                               # mundo
+    d_c = undistort_to_normalized(u, v, K, dist)   # ray direction in camera frame
+    d_w = R_wc @ d_c                               # ray direction in world frame
     d_w = d_w / (np.linalg.norm(d_w) + 1e-12)
     return d_w
 
@@ -148,10 +148,10 @@ def choose_ball_detection_ultralytics(result, ball_class_id=None):
 
 
 def draw_hoop_polyline(overlay, K, dist, rvec, tvec, V3_world):
-    thetas = np.linspace(0, 2*np.pi, 60, endpoint=False)
+    thetas = np.linspace(0, 2 * np.pi, 60, endpoint=False)
     pts = []
     for th in thetas:
-        Pw = V3_world + np.array([HOOP_R_M*np.cos(th), HOOP_R_M*np.sin(th), 0.0], dtype=float)
+        Pw = V3_world + np.array([HOOP_R_M * np.cos(th), HOOP_R_M * np.sin(th), 0.0], dtype=float)
         uv, _ = cv2.projectPoints(Pw.reshape(1, 3), rvec, tvec, K, dist)
         u, v = uv.reshape(2)
         if np.isfinite(u) and np.isfinite(v):
@@ -167,14 +167,14 @@ def main():
     calib = load_calibration(CALIB_JSON)
     common, obj_pts, img_pts, w_map = load_keypoints(KEYPOINTS_WORLD_CSV, KEYPOINTS_IMAGE_CSV)
 
-    # refina pose
+    # Refine pose
     rvec, tvec, rmse = refine_pose_solvepnp(calib, obj_pts, img_pts)
     print(f"[POSE] solvePnP RMSE (px): {rmse:.3f} | pts={common}")
 
     K = calib["K"]
     dist = calib["dist"]
 
-    # extrair R_wc e centro C no mundo
+    # Extract R_wc and camera center C in world coordinates
     R_cw, _ = cv2.Rodrigues(rvec)  # world->cam
     R_wc = R_cw.T
     C = -R_wc @ tvec.reshape(3)
@@ -184,13 +184,13 @@ def main():
     V3_use[2] += HOOP_Z_OFFSET_M
     V5 = w_map["V5"].astype(float)
 
-    X0 = float(V5[0])          # plano X=const
+    X0 = float(V5[0])          # plane X=const
     Z_hoop = float(V3[2])
 
-    # vídeo
+    # Video
     cap = cv2.VideoCapture(VIDEO_PATH)
     if not cap.isOpened():
-        raise FileNotFoundError(f"Não consegui abrir: {VIDEO_PATH}")
+        raise FileNotFoundError(f"Could not open: {VIDEO_PATH}")
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     if not fps or fps <= 1e-6:
@@ -200,7 +200,7 @@ def main():
 
     writer = cv2.VideoWriter(str(OUT_VIDEO), cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
     if not writer.isOpened():
-        raise RuntimeError(f"Não consegui abrir writer: {OUT_VIDEO}")
+        raise RuntimeError(f"Could not open writer: {OUT_VIDEO}")
 
     model = YOLO(MODEL_PATH)
 
@@ -210,7 +210,7 @@ def main():
 
     entered = False
     enter_streak = 0
-    best_inside = None   # para guardar o melhor instante "mais dentro"
+    best_inside = None   # stores the "best" (most centered) inside instant
 
     frame_id = 0
     while True:
@@ -243,17 +243,17 @@ def main():
         })
 
         if Xw is not None and np.isfinite(conf) and conf >= CONF_MIN:
-            # distância ao centro do aro em XY (no mundo)
+            # Distance to hoop center in world XY
             d_perp = float(np.hypot(Xw[0] - V3_use[0], Xw[1] - V3_use[1]))
 
-            # condições "passou completamente" + "cabe no aro"
+            # "Fully passed" + "fits through the hoop"
             cond_z = (Xw[2] <= (Z_hoop - BALL_R_M))
             cond_r = (d_perp <= (HOOP_R_M - BALL_R_M + ENTER_MARGIN_M))
 
             if cond_z and cond_r:
                 enter_streak += 1
 
-                # guarda o "melhor" frame (mais dentro)
+                # Keep the best (most centered) inside frame
                 score = d_perp
                 if best_inside is None or score < best_inside["d_perp"]:
                     best_inside = {
@@ -271,13 +271,8 @@ def main():
             else:
                 enter_streak = 0
 
-                # decisão: crossing em Z=Z_hoop a descer
-       
-
-
-
-
-
+                # Decision logic: descending crossing at Z=Z_hoop
+                # (intentionally left as in your original script)
 
         # -------- overlay --------
         overlay = frame.copy()
@@ -291,7 +286,7 @@ def main():
         for i in range(1, len(trail_px)):
             cv2.line(overlay, trail_px[i - 1], trail_px[i], (0, 255, 255), 2)
 
-        # aro (polilinha projetada)
+        # hoop (projected polyline)
         draw_hoop_polyline(overlay, K, dist, rvec, tvec, V3_use)
 
         # label
@@ -301,7 +296,7 @@ def main():
 
         writer.write(overlay)
 
-        cv2.imshow("Overlay (ESC/q sai)", overlay)
+        cv2.imshow("Overlay (ESC/q to quit)", overlay)
         key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord("q"):
             break
@@ -333,7 +328,7 @@ def main():
     print(f"[DONE] {OUT_VIDEO}")
     print(f"[DONE] {OUT_DECISION}")
 
-    # loop playback
+    # Playback loop
     cap2 = cv2.VideoCapture(str(OUT_VIDEO))
     if cap2.isOpened():
         while True:
@@ -342,7 +337,7 @@ def main():
                 ok, fr = cap2.read()
                 if not ok:
                     break
-                cv2.imshow("Overlay loop (ESC/q sai)", fr)
+                cv2.imshow("Overlay loop (ESC/q to quit)", fr)
                 key = cv2.waitKey(int(1000 / max(1.0, fps))) & 0xFF
                 if key == 27 or key == ord("q"):
                     cap2.release()
