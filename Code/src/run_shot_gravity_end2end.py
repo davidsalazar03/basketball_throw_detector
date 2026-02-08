@@ -12,7 +12,12 @@ import pandas as pd
 # ============================================================
 ROOT = Path(__file__).resolve().parent
 
-VIDEO_PATH = r"data/new_videos_raw/shot_4.mp4"
+SHOT = 20  # <-- select video here (1..20)
+
+if not (1 <= SHOT <= 20):
+    raise ValueError("SHOT must be between 1 and 20")
+
+VIDEO_PATH = Path(f"data/new_videos_raw/shot_{SHOT}.mp4")
 MODEL_PATH = r"runs/detect/train3/weights/best.pt"
 
 CALIB_JSON = r"outputs/calibration_refined.json"
@@ -20,9 +25,11 @@ KEYPOINTS_WORLD_CSV = r"inputs/keypoints_world.csv"
 KEYPOINTS_IMAGE_CSV = r"inputs/keypoints_image.csv"
 
 OUT_DIR = Path(r"outputs")
+OUT_DIR_VID = Path(r"outputs/overlays")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_DIR_VID.mkdir(parents=True, exist_ok=True)
 
-OUT_VIDEO = OUT_DIR / "overlay_shot_1.mp4"
+OUT_VIDEO = OUT_DIR_VID / f"overlay_shot_{SHOT}_gravitational.mp4"
 OUT_DETECTIONS = OUT_DIR / "ball_detections.csv"
 OUT_TRAJ_WORLD = OUT_DIR / "ball_trajectory_world.csv"
 OUT_DECISION = OUT_DIR / "shot_decision.json"
@@ -40,7 +47,7 @@ g = 9.81
 # Hoop / ball
 HOOP_DIAM_M = 0.45
 HOOP_R_M = HOOP_DIAM_M / 2.0
-HOOP_Z_OFFSET_M = -0.05
+HOOP_Z_OFFSET_M = -0.08
 BALL_R_M = 0.12
 
 # YOLO
@@ -595,17 +602,39 @@ def main():
         col = (0, 255, 0) if is_enter_now else (0, 0, 255)
         cv2.putText(overlay, label, (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.6, col, 3, cv2.LINE_AA)
 
+        # escreve o vídeo normalmente
         writer.write(overlay)
 
-        if SHOW_WINDOW:
-            cv2.imshow("Overlay (ESC/q to quit)", overlay)
+    writer.release()
+
+    # --------- EXIBIÇÃO EM LOOP ATÉ ESC ---------
+    if SHOW_WINDOW:
+        cap_out = cv2.VideoCapture(str(OUT_VIDEO))
+        if not cap_out.isOpened():
+            raise RuntimeError(f"Could not open output video for display: {OUT_VIDEO}")
+
+        window_name = "Overlay (ESC to exit)"
+        while True:
+            ok, frame = cap_out.read()
+            if not ok:
+                # end -> loop back to start
+                cap_out.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+
+            # small label: ESC to exit
+            cv2.putText(
+                frame, "ESC to exit", (20, 130),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA
+            )
+
+            cv2.imshow(window_name, frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == 27 or key == ord("q"):
+            if key == 27:  # ESC
                 break
 
-    writer.release()
-    if SHOW_WINDOW:
+        cap_out.release()
         cv2.destroyAllWindows()
+
 
     pd.DataFrame(detections).to_csv(OUT_DETECTIONS, index=False)
     pd.DataFrame(world_traj).to_csv(OUT_TRAJ_WORLD, index=False)

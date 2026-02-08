@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 
 # ---------------- USER PATHS ----------------
-VIDEO_PATH = r"data/new_videos_raw/shot_9.mp4"
+
+SHOT = 1  # <-- select video here (1..20)
+
+if not (1 <= SHOT <= 20):
+    raise ValueError("SHOT must be between 1 and 20")
+
+VIDEO_PATH = Path(f"data/new_videos_raw/shot_{SHOT}.mp4")
 MODEL_PATH = r"runs/detect/train3/weights/best.pt"
 
 CALIB_JSON = r"outputs/calibration_refined.json"
@@ -14,9 +20,11 @@ KEYPOINTS_WORLD_CSV = r"inputs/keypoints_world.csv"
 KEYPOINTS_IMAGE_CSV = r"inputs/keypoints_image.csv"
 
 OUT_DIR = Path("outputs")
+OUT_DIR_VID = Path(r"outputs/overlays")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+OUT_DIR_VID.mkdir(parents=True, exist_ok=True)
 
-OUT_VIDEO = OUT_DIR / "overlay_shot_4.mp4"
+OUT_VIDEO = OUT_DIR_VID / f"overlay_shot_{SHOT}.mp4"
 OUT_DETECTIONS = OUT_DIR / "ball_detections.csv"
 OUT_TRAJ_WORLD = OUT_DIR / "ball_trajectory_world.csv"
 OUT_DECISION = OUT_DIR / "shot_decision.json"
@@ -29,14 +37,14 @@ HOOP_Z_OFFSET_M = -0.08  # adjust: -0.10 lowers hoop by 10 cm
 
 BALL_R_M = 0.12
 ENTER_N_CONSEC = 3       # number of consecutive frames (2 or 3 is typical)
-ENTER_MARGIN_M = 0.00    # extra margin (set 0.01 if you want to be more permissive)
+ENTER_MARGIN_M = 0.00    # extra margin 
 
 # Decision (simple and not conservative)
 TOL_M = 0.05  # extra tolerance (m): tune if needed
 
 # Detection
 CONF_MIN = 0.25
-BALL_CLASS_ID = None  # set the class id if your model has multiple classes
+BALL_CLASS_ID = None  
 
 # Overlay
 MAX_TRAIL = 140
@@ -272,7 +280,7 @@ def main():
                 enter_streak = 0
 
                 # Decision logic: descending crossing at Z=Z_hoop
-                # (intentionally left as in your original script)
+                
 
         # -------- overlay --------
         overlay = frame.copy()
